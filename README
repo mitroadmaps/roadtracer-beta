@@ -1,0 +1,122 @@
+Steps:
+
+(0) Installation
+(1) Prepare satellite imagery into individual tile images
+(2) Convert road network map into .graph files
+(3) Create tile list
+(4) Train a model
+(5) Infer roads in a new region
+
+
+(0) Installation
+----------------
+
+These Python packages are required:
+* tensorflow-gpu
+* fiona
+* rtree
+
+
+(1) Prepare satellite imagery
+-----------------------------
+
+Satellite imagery is read from 4096x4096 pixel .png images.
+These images form a 2D grid.
+The filenames should be like:
+
+    imagery/REGION_0_0_sat.png
+    imagery/REGION_0_1_sat.png
+    imagery/REGION_1_0_sat.png
+    imagery/REGION_1_1_sat.png
+
+Each filename is of the format REGION_X_Y_sat.png.
+
+* REGION is a label for one portion of satellite imagery.
+  You can have multiple regions, like this:
+    imagery/region1_0_0_sat.png
+    imagery/region1_0_1_sat.png
+    imagery/region2_0_0_sat.png
+    imagery/region2_1_0_sat.png
+
+* X and Y are the coordinates of the image in the grid.
+  For example, REGION_0_1 should be to the right of REGION_0_0.
+  Similarly, REGION_1_0 should be below REGION_0_0.
+  If we concatenate the images like this, the result should be a large coherent image:
+
+    REGION_0_0    REGION_0_1
+    REGION_1_0    REGION_1_1
+
+
+(2) Convert road network map into .graph files
+----------------------------------------------
+
+The road network map must be represented as an undirected graph in a custom text format.
+
+The format has two sections, vertices then edges, which together look like this:
+
+    100 200
+    100 400
+    100 600
+    200 400
+
+    0 1
+    1 0
+    1 2
+    2 1
+    1 3
+    3 1
+
+The first four lines are vertices, while the last six are edges.
+Each vertex line has two parts: the X coordinate and the Y coordinate.
+These coordinates must be in the imagery coordinate system.
+
+For example, because our images are 4096x4096, the coordinate (8192, 8192) is in
+REGION_2_2_sat.png at (0, 0). Similarly, (6000, 1000) is in REGION_1_0_sat.png
+at (1904, 1000).
+
+Each edge line has two parts: a source vertex and a destination vertex.
+The vertices are referenced by their 0-indexed line number. So "0 1" connects
+vertex (100, 200) to vertex (100, 400).
+
+The graph above looks like this:
+
+    (100, 200) -- (100, 400) -- (100, 600)
+                      |
+                  (200, 400)
+
+util_shp_to_graph.py converts a shapefile to the graph file format.
+However, you still need to convert the longitude-latitude coordinates to pixel coordinates.
+
+There must be one graph file per region, and they must be stored in a folder like this:
+
+    graphs/region1.graph
+    graphs/region2.graph
+
+The filenames (region1 and region2) should correspond to the regions in the imagery filenames.
+
+
+(3) Create tile list
+--------------------
+
+The model training code needs to know which parts of the road network map to train on.
+If you want to train the model everywhere where there is map data, then you can run:
+
+$ python util_create_tile_list.py region1,region2 graphs/region1.graph,graphs/region2.graph tile_list.json
+
+
+(4) Train a model
+-----------------
+
+$ mkdir model/ model/model_latest/ model/model_best/
+$ python run_m5_point.py model/ imagery/ graphs/ tile_list.json
+
+
+(5) Infer roads in a new region
+-------------------------------
+
+To infer roads in a new region, you need a basemap (also in the .graph file with
+coordinates matching the imagery pixels) and the region label for the imagery.
+
+Then just run:
+
+$ python eval_m5_point.py model/model_best/model imagery/ graphs/ tile_list.json REGION basemap.graph
